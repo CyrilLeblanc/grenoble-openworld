@@ -6,8 +6,8 @@
 ##   building=yes, has_parts=true   → render as ground-level base slab only
 ##   building:part=yes              → render from min_height_m to height_m
 ##
-## Wall and roof colours are read from OSM tags (building:colour, roof:colour).
-## Materials are cached by colour to avoid duplicates across thousands of buildings.
+## Wall and roof materials are resolved by BuildingMaterialLibrary, which maps
+## OSM tags (building type, explicit colours) to distinct StandardMaterial3D.
 ##
 ## Coordinate convention (matches Terrain.gd and BuildingMeshFactory):
 ##   GeoJSON [x, y] = [UTM_easting_local, UTM_northing_local]
@@ -25,10 +25,6 @@ const BUILDINGS_PATH := "res://data/buildings.geojson"
 const FLOOR_HEIGHT_M: float = 3.0
 const DEFAULT_LEVELS: int   = 3
 
-## Default colours when no OSM colour tag is present.
-const DEFAULT_WALL_COLOUR := Color(0.72, 0.70, 0.68)
-const DEFAULT_ROOF_COLOUR := Color(0.55, 0.45, 0.38)
-
 @onready var _terrain: Terrain = get_node("../Terrain")
 
 # ---------------------------------------------------------------------------
@@ -41,8 +37,7 @@ signal building_spawned(world_pos: Vector3, size: Vector3, properties: Dictionar
 # Private state
 # ---------------------------------------------------------------------------
 
-## Material cache — keyed by Color to avoid creating duplicates.
-var _material_cache: Dictionary = {}
+var _material_library := BuildingMaterialLibrary.new()
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -80,7 +75,7 @@ func _load_and_spawn() -> void:
 	for feature in features:
 		_process_feature(feature)
 
-	print("BuildingSpawner: done. (%d unique materials)" % _material_cache.size())
+	print("BuildingSpawner: done. (%d cached materials)" % _material_library.cache_size())
 
 
 func _process_feature(feature: Dictionary) -> void:
@@ -121,15 +116,11 @@ func _process_feature(feature: Dictionary) -> void:
 	if building_mesh == null:
 		return
 
-	# --- Colours ---
-	var wall_colour := _parse_osm_colour(properties.get("wall_colour"), DEFAULT_WALL_COLOUR)
-	var roof_colour := _parse_osm_colour(properties.get("roof_colour"), DEFAULT_ROOF_COLOUR)
-
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh     = building_mesh
 	mesh_instance.position = Vector3(centroid.x, ground_y, centroid.y)
-	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_WALLS, _get_material(wall_colour))
-	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_ROOF,  _get_material(roof_colour))
+	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_WALLS, _material_library.get_wall_material(properties))
+	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_ROOF,  _material_library.get_roof_material(properties))
 	add_child(mesh_instance)
 
 	building_spawned.emit(
@@ -151,51 +142,6 @@ func _resolve_height(properties: Dictionary) -> float:
 	if levels != null:
 		return int(levels) * FLOOR_HEIGHT_M
 	return DEFAULT_LEVELS * FLOOR_HEIGHT_M
-
-
-# ---------------------------------------------------------------------------
-# Colour parsing
-# ---------------------------------------------------------------------------
-
-## Parse an OSM colour string into a Godot Color.
-## Handles: named colours ("white", "grey"), #rrggbb, bare rrggbb hex.
-## Returns fallback on failure.
-static func _parse_osm_colour(raw: Variant, fallback: Color) -> Color:
-	if raw == null or typeof(raw) != TYPE_STRING:
-		return fallback
-	var s := (raw as String).strip_edges()
-	if s.is_empty():
-		return fallback
-
-	# Sentinel: out-of-gamut value no valid colour string can produce.
-	const SENTINEL := Color(9.0, 9.0, 9.0, 9.0)
-
-	# Try as-is (covers named colours and #rrggbb).
-	var c := Color.from_string(s, SENTINEL)
-	if c != SENTINEL:
-		return c
-
-	# Retry with '#' prefix for bare hex values like "aabbcc".
-	if not s.begins_with("#"):
-		c = Color.from_string("#" + s, SENTINEL)
-		if c != SENTINEL:
-			return c
-
-	return fallback
-
-
-# ---------------------------------------------------------------------------
-# Material cache
-# ---------------------------------------------------------------------------
-
-func _get_material(colour: Color) -> StandardMaterial3D:
-	if _material_cache.has(colour):
-		return _material_cache[colour]
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = colour
-	mat.cull_mode    = BaseMaterial3D.CULL_DISABLED
-	_material_cache[colour] = mat
-	return mat
 
 
 # ---------------------------------------------------------------------------
