@@ -22,6 +22,9 @@ BUILDINGS_GEOJSON = OUTPUT_DIR / "buildings.geojson"
 DEM_RAW_DIR = OUTPUT_DIR / "dem_tiles"
 HEIGHTMAP_PNG = OUTPUT_DIR / "heightmap.png"
 
+OSM_TILE_CACHE_DIR  = OUTPUT_DIR / "osm_tiles"
+TERRAIN_TEXTURE_PNG = OUTPUT_DIR / "terrain_texture.png"
+
 GODOT_DATA_DIR = ROOT_DIR.parent / "data"
 
 
@@ -35,6 +38,8 @@ class WorldConfig:
     center_lon: float
     radius_m: float          # radius around center to include
     heightmap_size: int      # output PNG resolution (square)
+    tile_zoom: int           # OSM tile zoom level for terrain texture
+    terrain_texture_size: int  # terrain texture output resolution (square)
 
     def bbox(self) -> tuple[float, float, float, float]:
         """Return (min_lon, min_lat, max_lon, max_lat) for the given radius."""
@@ -71,6 +76,8 @@ EXCLUDED_WAY_IDS: set[int] = {
 WORLD = WorldConfig(
     center_lat=45.188967,
     center_lon=5.724615,
-    radius_m=5_000,       # 5 000 m → 10 km diameter
+    radius_m=5_000,            # 5 000 m → 10 km diameter
     heightmap_size=1024,
+    tile_zoom=15,              # zoom 15 ≈ 3.4 m/px at this latitude (~30 tiles per axis)
+    terrain_texture_size=4096, # final texture resolution after stitching and cropping
 )
