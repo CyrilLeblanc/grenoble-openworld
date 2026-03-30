@@ -4,8 +4,8 @@
 [ext_resource type="Script" uid="uid://84qk1likton8" path="res://scripts/Terrain.gd" id="2"]
 [ext_resource type="Script" uid="uid://c4j4j04sd0gdw" path="res://scripts/BuildingSpawner.gd" id="3"]
 [ext_resource type="Script" uid="uid://c7qnydbvwlxpn" path="res://scripts/NoclipPlayer.gd" id="4"]
-[ext_resource type="Script" uid="uid://landusemeshspawner" path="res://scripts/LanduseMeshSpawner.gd" id="5"]
 [ext_resource type="Script" uid="uid://roadmeshspawner" path="res://scripts/RoadMeshSpawner.gd" id="6"]
+[ext_resource type="Script" uid="uid://forestspawner" path="res://scripts/ForestSpawner.gd" id="7"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -39,11 +39,11 @@ script = ExtResource("2")
 [node name="BuildingSpawner" type="Node3D" parent="." unique_id=2145252328]
 script = ExtResource("3")
 
-[node name="LanduseMeshSpawner" type="Node3D" parent="." unique_id=3012847651]
-script = ExtResource("5")
-
 [node name="RoadMeshSpawner" type="Node3D" parent="." unique_id=4023958762]
 script = ExtResource("6")
+
+[node name="ForestSpawner" type="Node3D" parent="." unique_id=5034069873]
+script = ExtResource("7")
 
 [node name="Player" type="Camera3D" parent="." unique_id=939262276]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 800, 0)
