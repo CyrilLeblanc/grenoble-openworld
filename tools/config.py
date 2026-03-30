@@ -18,6 +18,8 @@ OUTPUT_DIR = ROOT_DIR / "output"
 OSM_SOURCE_PBF = OUTPUT_DIR / "rhone-alpes-latest.osm.pbf"
 OSM_CLIPPED_PBF = OUTPUT_DIR / "grenoble.osm.pbf"
 BUILDINGS_GEOJSON = OUTPUT_DIR / "buildings.geojson"
+LANDUSE_GEOJSON   = OUTPUT_DIR / "landuse.geojson"
+ROADS_GEOJSON     = OUTPUT_DIR / "roads.geojson"
 
 DEM_RAW_DIR = OUTPUT_DIR / "dem_tiles"
 HEIGHTMAP_PNG = OUTPUT_DIR / "heightmap.png"

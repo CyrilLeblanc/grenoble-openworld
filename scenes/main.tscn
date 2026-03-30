@@ -4,6 +4,8 @@
 [ext_resource type="Script" uid="uid://84qk1likton8" path="res://scripts/Terrain.gd" id="2"]
 [ext_resource type="Script" uid="uid://c4j4j04sd0gdw" path="res://scripts/BuildingSpawner.gd" id="3"]
 [ext_resource type="Script" uid="uid://c7qnydbvwlxpn" path="res://scripts/NoclipPlayer.gd" id="4"]
+[ext_resource type="Script" uid="uid://landusemeshspawner" path="res://scripts/LanduseMeshSpawner.gd" id="5"]
+[ext_resource type="Script" uid="uid://roadmeshspawner" path="res://scripts/RoadMeshSpawner.gd" id="6"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -13,8 +15,9 @@ sky_material = SubResource("ProceduralSkyMaterial_1")
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 2
 sky = SubResource("Sky_1")
-ambient_light_source = 3
-ambient_light_energy = 0.5
+ambient_light_source = 2
+ambient_light_color = Color(0.8, 0.82, 0.85, 1)
+ambient_light_energy = 1.0
 tonemap_mode = 2
 
 [node name="Main" type="Node3D" unique_id=764551733]
@@ -35,6 +38,12 @@ script = ExtResource("2")
 
 [node name="BuildingSpawner" type="Node3D" parent="." unique_id=2145252328]
 script = ExtResource("3")
+
+[node name="LanduseMeshSpawner" type="Node3D" parent="." unique_id=3012847651]
+script = ExtResource("5")
+
+[node name="RoadMeshSpawner" type="Node3D" parent="." unique_id=4023958762]
+script = ExtResource("6")
 
 [node name="Player" type="Camera3D" parent="." unique_id=939262276]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 800, 0)

@@ -104,6 +104,22 @@ def _crop_to_world(data, transform):
     return cropped, world_width_m, world_height_m
 
 
+def _smooth_elevation(elevation: np.ndarray, sigma: float = 2.0) -> np.ndarray:
+    """
+    Apply a separable Gaussian blur to suppress DSM noise (building rooftops, tree canopy).
+    sigma=2 at ~30 m/px ≈ 60 m smoothing — removes sub-block artefacts while
+    preserving street-scale terrain variation and mountain shapes.
+    """
+    ksize = int(sigma * 4) * 2 + 1
+    x = np.arange(ksize) - ksize // 2
+    kernel = np.exp(-x ** 2 / (2 * sigma ** 2)).astype(np.float64)
+    kernel /= kernel.sum()
+
+    result = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=elevation.astype(np.float64))
+    result = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=0, arr=result)
+    return result.astype(np.float32)
+
+
 def _normalise_to_16bit(elevation: np.ndarray) -> tuple[np.ndarray, float, float]:
     valid = elevation[elevation > -9000]  # exclude nodata
     elev_min = float(valid.min())
@@ -160,6 +176,9 @@ def main() -> None:
         f"Crop size: {elevation.shape[1]}×{elevation.shape[0]} px  "
         f"({world_w:.0f}×{world_h:.0f} m)"
     )
+
+    print("Smoothing elevation (Gaussian blur sigma=6 to remove DSM noise) ...")
+    elevation = _smooth_elevation(elevation, sigma=6.0)
 
     uint16, elev_min, elev_max = _normalise_to_16bit(elevation)
 

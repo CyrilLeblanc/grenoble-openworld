@@ -200,16 +200,7 @@ func _attach_collision(image: Image) -> void:
 
 func _make_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.cull_mode = BaseMaterial3D.CULL_FRONT
-
-	const TEXTURE_PATH := "res://data/terrain_texture.png"
-	if FileAccess.file_exists(TEXTURE_PATH):
-		var img := Image.new()
-		if img.load(TEXTURE_PATH) == OK:
-			mat.albedo_texture        = ImageTexture.create_from_image(img)
-			mat.texture_filter        = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-			mat.albedo_color          = Color.WHITE  # no tint — show texture as-is
-	else:
-		mat.albedo_color = Color(0.38, 0.52, 0.28)  # fallback: earthy green
-
+	mat.cull_mode    = BaseMaterial3D.CULL_FRONT
+	mat.albedo_color = Color(0.62, 0.58, 0.50)  # neutral sandy base — landuse overlays add colour
+	mat.roughness    = 0.95
 	return mat
