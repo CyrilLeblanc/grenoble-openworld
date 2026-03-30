@@ -119,7 +119,7 @@ func _process_feature(feature: Dictionary) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh     = building_mesh
 	mesh_instance.position = Vector3(centroid.x, ground_y, centroid.y)
-	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_WALLS, _material_library.get_wall_material(properties))
+	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_WALLS, _material_library.get_wall_material(properties) as Material)
 	mesh_instance.set_surface_override_material(BuildingMeshFactory.SURFACE_ROOF,  _material_library.get_roof_material(properties))
 	add_child(mesh_instance)
 
