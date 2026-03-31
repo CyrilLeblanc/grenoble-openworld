@@ -100,7 +100,7 @@ func _process_feature(feature: Dictionary) -> void:
 
 	var centroid: Vector2 = _ring_centroid(footprint_world)
 	var aabb:     Rect2   = _ring_aabb(footprint_world)
-	var ground_y: float   = _terrain.sample_height(centroid.x, centroid.y) if _terrain else 0.0
+	var ground_y: float   = _sample_min_height(footprint_world) if _terrain else 0.0
 
 	var is_part:   bool = bool(properties.get("is_part",  false))
 	var has_parts: bool = bool(properties.get("has_parts", false))
@@ -171,6 +171,16 @@ func _resolve_height(properties: Dictionary) -> float:
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
+func _sample_min_height(footprint: PackedVector2Array) -> float:
+	## Sample terrain at every footprint vertex and return the minimum.
+	## Buildings anchor to the lowest point under their base, preventing floating
+	## on sloped terrain.
+	var min_y := INF
+	for v in footprint:
+		min_y = minf(min_y, _terrain.sample_height(v.x, v.y))
+	return min_y if min_y != INF else 0.0
+
 
 func _ring_centroid(ring: PackedVector2Array) -> Vector2:
 	var sum := Vector2.ZERO

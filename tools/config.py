@@ -78,6 +78,15 @@ EXCLUDED_WAY_IDS: set[int] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# DEM processing parameters
+# ---------------------------------------------------------------------------
+
+# Flat-area adaptive smoothing (applied to IGN DTM to remove urban micro-relief)
+DEM_FLAT_SIGMA: float = 3.0               # Gaussian blur strength on flat areas
+DEM_FLAT_GRADIENT_THRESHOLD: float = 0.5  # m/px — below this, terrain is considered "flat"
+
+
 # Default world — 10 km radius around Grenoble city centre
 WORLD = WorldConfig(
     center_lat=45.188967,

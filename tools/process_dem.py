@@ -26,7 +26,11 @@ from rasterio.merge import merge
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.crs import CRS
 
-from config import WORLD, DEM_RAW_DIR, IGN_DEM_TIFF, HEIGHTMAP_PNG, OUTPUT_DIR, LANDUSE_GEOJSON
+from config import (
+    WORLD, DEM_RAW_DIR, IGN_DEM_TIFF, HEIGHTMAP_PNG, OUTPUT_DIR,
+    LANDUSE_GEOJSON, ROADS_GEOJSON,
+    DEM_FLAT_SIGMA, DEM_FLAT_GRADIENT_THRESHOLD,
+)
 
 
 _TARGET_CRS = CRS.from_epsg(32631)  # UTM zone 31N — metres
@@ -136,27 +140,36 @@ def _smooth_elevation(elevation: np.ndarray, sigma: float = 2.0) -> np.ndarray:
     return result.astype(np.float32)
 
 
-def _depress_water(elevation: np.ndarray, transform, depression_m: float = 2.5) -> np.ndarray:
-    """Lower pixels that fall inside OSM water polygons by depression_m metres.
+def _apply_gaussian_2d(arr: np.ndarray, sigma: float) -> np.ndarray:
+    """2-D Gaussian blur — uses scipy if available, else separable 1-D convolution."""
+    try:
+        from scipy.ndimage import gaussian_filter
+        return gaussian_filter(arr.astype(np.float64), sigma=sigma)
+    except ImportError:
+        pass
+    ksize = int(sigma * 4) * 2 + 1
+    x = np.arange(ksize) - ksize // 2
+    kernel = np.exp(-x ** 2 / (2 * sigma ** 2)).astype(np.float64)
+    kernel /= kernel.sum()
+    out = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=arr.astype(np.float64))
+    out = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=0, arr=out)
+    return out
 
-    Water polygons in landuse.geojson use local UTM 31N coords (metres from
-    world centre).  This function offsets them to absolute UTM 31N so they
-    align with the elevation array's transform.
-    """
+
+def _build_water_mask(shape: tuple, transform) -> np.ndarray:
+    """Rasterize OSM water polygons into a binary uint8 mask (1 = water)."""
     import json
     from pyproj import Transformer
     from rasterio.features import rasterize as rio_rasterize
-    from shapely.geometry import shape, mapping
+    from shapely.geometry import shape as shp_shape, mapping
     from shapely.affinity import translate
 
     if not LANDUSE_GEOJSON.exists():
-        print("  landuse.geojson not found — skipping water depression.")
-        return elevation
+        return np.zeros(shape, dtype=np.uint8)
 
     with open(LANDUSE_GEOJSON) as f:
         geojson = json.load(f)
 
-    # World centre in absolute UTM 31N.
     to_utm = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
     cx, cy = to_utm.transform(WORLD.center_lon, WORLD.center_lat)
 
@@ -164,17 +177,15 @@ def _depress_water(elevation: np.ndarray, transform, depression_m: float = 2.5) 
     for feat in geojson.get("features", []):
         if feat["properties"].get("type") != "water":
             continue
-        geom = shape(feat["geometry"])
-        # local UTM (origin = world centre) → absolute UTM 31N
+        geom = shp_shape(feat["geometry"])
         geom = translate(geom, xoff=cx, yoff=cy)
         water_shapes.append(mapping(geom))
 
     if not water_shapes:
-        print("  No water polygons found in landuse.geojson — skipping.")
-        return elevation
+        return np.zeros(shape, dtype=np.uint8)
 
-    h, w = elevation.shape
-    mask = rio_rasterize(
+    h, w = shape
+    return rio_rasterize(
         [(g, 1) for g in water_shapes],
         out_shape=(h, w),
         transform=transform,
@@ -182,7 +193,162 @@ def _depress_water(elevation: np.ndarray, transform, depression_m: float = 2.5) 
         dtype=np.uint8,
     )
 
+
+def _smooth_flat_areas(
+    elevation: np.ndarray,
+    transform,
+    sigma: float = 3.0,
+    gradient_threshold: float = 0.5,
+) -> np.ndarray:
+    """Gaussian blur applied only on flat areas (low gradient), excluding water.
+
+    Flat areas are detected by gradient magnitude < gradient_threshold (m/px).
+    Water polygons are excluded from the flat mask so the river depression step
+    is not undermined.  Mask edges are smoothed to avoid transition artefacts.
+    """
+    elev64 = elevation.astype(np.float64)
+
+    # 1. Gradient magnitude (m/px)
+    dy = np.gradient(elev64, axis=0)
+    dx = np.gradient(elev64, axis=1)
+    grad_mag = np.sqrt(dx ** 2 + dy ** 2)
+
+    # 2. Raw flat mask
+    flat_mask = (grad_mag < gradient_threshold).astype(np.float32)
+
+    # 3. Exclude water bodies so river banks are not flattened
+    water_mask = _build_water_mask(elevation.shape, transform)
+    flat_mask[water_mask == 1] = 0.0
+
+    # 4. Smooth mask edges to avoid hard transition artefacts
+    smooth_mask = _apply_gaussian_2d(flat_mask, sigma=sigma).astype(np.float32)
+    smooth_mask = np.clip(smooth_mask, 0.0, 1.0)
+
+    # 5. Blur elevation
+    blurred = _apply_gaussian_2d(elev64, sigma=sigma)
+
+    # 6. Blend
+    result = blurred * smooth_mask + elev64 * (1.0 - smooth_mask)
+
+    n_flat = int((flat_mask > 0.5).sum())
+    total  = flat_mask.size
+    print(f"  Flat-area smoothing: {n_flat}/{total} px identified as flat "
+          f"(threshold={gradient_threshold} m/px, sigma={sigma}).")
+    return result.astype(np.float32)
+
+
+def _flatten_roads(elevation: np.ndarray, transform) -> np.ndarray:
+    """Flatten terrain transversally under roads.
+
+    For each road segment, the elevation at the road centreline is sampled and
+    stamped across the full road width perpendicularly to the road direction.
+    The road can still slope longitudinally; only the cross-section is levelled.
+
+    Roads coordinates in roads.geojson are local UTM 31N (metres from world
+    centre), same convention as landuse.geojson.
+    """
+    import json
+    from pyproj import Transformer
+
+    if not ROADS_GEOJSON.exists():
+        print("  roads.geojson not found — skipping road terrain flattening.")
+        print("  Run extract_roads.py before process_dem.py to enable this.")
+        return elevation
+
+    with open(ROADS_GEOJSON) as f:
+        geojson = json.load(f)
+
+    to_utm = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
+    cx, cy = to_utm.transform(WORLD.center_lon, WORLD.center_lat)
+
+    h, w       = elevation.shape
+    pixel_size = abs(float(transform.a))   # metres per pixel (east)
+
+    reference = elevation.copy()   # sample centre elevations from unmodified array
+    result    = elevation.copy()
+
+    road_count = 0
+    for feat in geojson.get("features", []):
+        geom = feat.get("geometry", {})
+        if geom.get("type") != "LineString":
+            continue
+
+        props      = feat.get("properties", {})
+        road_width = float(props.get("width", 6.0))
+        half_px    = max(1.0, (road_width / 2.0) / pixel_size)
+
+        coords = geom.get("coordinates", [])
+        if len(coords) < 2:
+            continue
+
+        # Local UTM → pixel (col, row)
+        def _to_px(lx, ly):
+            ax = lx + cx
+            ay = ly + cy
+            return (ax - transform.c) / transform.a, (ay - transform.f) / transform.e
+
+        px_coords = [_to_px(c[0], c[1]) for c in coords]
+
+        for i in range(len(px_coords) - 1):
+            col0, row0 = px_coords[i]
+            col1, row1 = px_coords[i + 1]
+
+            dcol = col1 - col0
+            drow = row1 - row0
+            seg_len = np.hypot(dcol, drow)
+            if seg_len < 0.5:
+                continue
+
+            dir_col = dcol / seg_len
+            dir_row = drow / seg_len
+            # Perpendicular (rotate 90°)
+            perp_col = -dir_row
+            perp_row =  dir_col
+
+            # Sample one point per pixel along the segment
+            n_s = max(2, int(seg_len) + 1)
+            t   = np.linspace(0.0, 1.0, n_s)
+
+            s_cols = col0 + t * dcol   # (n_s,)
+            s_rows = row0 + t * drow
+
+            # Clamp for safe sampling
+            s_ci = np.clip(np.round(s_cols).astype(int), 0, w - 1)
+            s_ri = np.clip(np.round(s_rows).astype(int), 0, h - 1)
+
+            centre_elevs = reference[s_ri, s_ci]   # (n_s,)
+
+            # Perpendicular offsets in pixel space
+            n_perp = int(np.ceil(half_px))
+            dp = np.arange(-n_perp, n_perp + 1, dtype=np.float64)   # (2*n_perp+1,)
+
+            # All pixel positions: (n_s, 2*n_perp+1)
+            all_cols = np.round(s_cols[:, None] + dp[None, :] * perp_col).astype(int)
+            all_rows = np.round(s_rows[:, None] + dp[None, :] * perp_row).astype(int)
+
+            valid = (all_cols >= 0) & (all_cols < w) & (all_rows >= 0) & (all_rows < h)
+
+            elevs_2d = np.repeat(centre_elevs[:, None], 2 * n_perp + 1, axis=1)
+            result[all_rows[valid], all_cols[valid]] = elevs_2d[valid]
+
+        road_count += 1
+
+    print(f"  Road terrain flattening: processed {road_count} roads.")
+    return result
+
+
+def _depress_water(elevation: np.ndarray, transform, depression_m: float = 2.5) -> np.ndarray:
+    """Lower pixels that fall inside OSM water polygons by depression_m metres."""
+    if not LANDUSE_GEOJSON.exists():
+        print("  landuse.geojson not found — skipping water depression.")
+        return elevation
+
+    mask     = _build_water_mask(elevation.shape, transform)
     n_pixels = int(mask.sum())
+    if n_pixels == 0:
+        print("  No water polygons found in landuse.geojson — skipping.")
+        return elevation
+
     print(f"  Depressing {n_pixels} water pixels by {depression_m} m.")
     result = elevation.copy()
     result[mask == 1] -= depression_m
@@ -258,6 +424,16 @@ def main() -> None:
     if is_dsm:
         print("Smoothing elevation (Gaussian blur sigma=6 to suppress DSM noise) ...")
         elevation = _smooth_elevation(elevation, sigma=6.0)
+
+    print("Smoothing flat areas (adaptive gradient-based blur) ...")
+    elevation = _smooth_flat_areas(
+        elevation, crop_transform,
+        sigma=DEM_FLAT_SIGMA,
+        gradient_threshold=DEM_FLAT_GRADIENT_THRESHOLD,
+    )
+
+    print("Flattening terrain under roads ...")
+    elevation = _flatten_roads(elevation, crop_transform)
 
     print("Depressing water bodies ...")
     elevation = _depress_water(elevation, crop_transform)
