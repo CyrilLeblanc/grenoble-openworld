@@ -22,6 +22,7 @@ LANDUSE_GEOJSON    = OUTPUT_DIR / "landuse.geojson"
 LANDUSE_TEXTURE_PNG = OUTPUT_DIR / "landuse_texture.png"
 ROADS_GEOJSON      = OUTPUT_DIR / "roads.geojson"
 TREES_GEOJSON      = OUTPUT_DIR / "trees.geojson"
+FURNITURE_GEOJSON  = OUTPUT_DIR / "furniture.geojson"
 
 DEM_RAW_DIR = OUTPUT_DIR / "dem_tiles"
 IGN_DEM_TIFF     = OUTPUT_DIR / "ign_rge_alti.tif"   # downloaded by download_dem_ign.py

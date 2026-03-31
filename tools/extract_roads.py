@@ -71,6 +71,18 @@ _HIGHWAY: dict[str, tuple[str, float]] = {
     "service":         ("service",    3.0),
 }
 
+# Default lane counts per highway type (used when lanes= tag is absent).
+_DEFAULT_LANES: dict[str, int] = {
+    "motorway": 3, "motorway_link": 1,
+    "trunk": 2,    "trunk_link": 1,
+    "primary": 2,  "primary_link": 1,
+    "secondary": 2, "secondary_link": 1,
+    "tertiary": 2, "tertiary_link": 1,
+    "unclassified": 1,
+    "residential": 1,
+    "service": 1,
+}
+
 _WATERWAY: dict[str, tuple[str, float]] = {
     "river":  ("river",   20.0),
     "canal":  ("canal",    8.0),
@@ -110,6 +122,18 @@ class _RoadHandler(osmium.SimpleHandler):
         if len(coords) < 2:
             return
 
+        # Extra tags (road categories only; waterways don't carry these).
+        hw = w.tags.get("highway", "")
+        sidewalk = w.tags.get("sidewalk")        # left/right/both/no/None
+        oneway   = w.tags.get("oneway", "no") in ("yes", "1", "true")
+        lanes_raw = w.tags.get("lanes")
+        lanes    = int(lanes_raw) if lanes_raw and lanes_raw.isdigit() \
+                   else _DEFAULT_LANES.get(hw, 1)
+        surface  = w.tags.get("surface")        # asphalt/concrete/unpaved/…
+        bridge   = w.tags.get("bridge", "no") in ("yes", "1", "true", "viaduct")
+        layer_raw = w.tags.get("layer", "0")
+        layer    = int(layer_raw) if layer_raw.lstrip("-").isdigit() else 0
+
         self.features.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords},
@@ -117,6 +141,12 @@ class _RoadHandler(osmium.SimpleHandler):
                 "category": category,
                 "width":    width,
                 "name":     w.tags.get("name"),
+                "sidewalk": sidewalk,
+                "oneway":   oneway,
+                "lanes":    lanes,
+                "surface":  surface,
+                "bridge":   bridge,
+                "layer":    layer,
             },
         })
 

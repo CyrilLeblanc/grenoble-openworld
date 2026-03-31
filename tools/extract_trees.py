@@ -2,8 +2,12 @@
 extract_trees.py — Extract individual tree nodes (natural=tree) from the clipped OSM PBF.
 
 Each feature is a GeoJSON Point with properties:
-  species : OSM species or species:en tag (may be null)
-  height  : parsed height in metres (may be null)
+  species        : OSM species or species:en tag (may be null)
+  genus          : OSM genus tag, or first word of species if absent (may be null)
+  height         : parsed height in metres (may be null)
+  circumference  : trunk circumference in metres (may be null)
+  diameter_crown : canopy diameter in metres (may be null)
+  start_date     : planting year string e.g. "1985" (may be null)
 
 Coordinates are projected to local metres (UTM 31N, origin = world centre),
 matching buildings.geojson and heightmap.json.
@@ -66,12 +70,26 @@ class _TreeHandler(osmium.SimpleHandler):
         species = n.tags.get("species:en") or n.tags.get("species")
         height  = _parse_height(n.tags.get("height"))
 
+        # Genus: explicit tag, or infer from first word of species name.
+        genus_raw = n.tags.get("genus")
+        if not genus_raw and species:
+            genus_raw = species.split()[0]
+        genus = genus_raw.capitalize() if genus_raw else None
+
+        circumference  = _parse_height(n.tags.get("circumference"))
+        diameter_crown = _parse_height(n.tags.get("diameter_crown"))
+        start_date     = n.tags.get("start_date")  # "1985", "1985-06-01", …
+
         self.features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [x, y]},
             "properties": {
-                "species": species,
-                "height":  height,
+                "species":        species,
+                "genus":          genus,
+                "height":         height,
+                "circumference":  circumference,
+                "diameter_crown": diameter_crown,
+                "start_date":     start_date,
             },
         })
 

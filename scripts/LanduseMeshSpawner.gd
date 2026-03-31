@@ -5,7 +5,7 @@
 ##
 ## Normalised type → material mapping:
 ##   wood       → dark green,  roughness 0.95
-##   water      → blue,        roughness 0.05  (simple flat; shader added later)
+##   water      → water.gdshader (animated waves, see shader for parameters)
 ##   grass      → light green, roughness 0.95
 ##   wetland    → teal-green,  roughness 0.90
 ##   farmland   → golden tan,  roughness 0.95
@@ -20,7 +20,8 @@
 class_name LanduseMeshSpawner
 extends Node3D
 
-const LANDUSE_PATH := "res://data/landuse.geojson"
+const LANDUSE_PATH    := "res://data/landuse.geojson"
+const WATER_SHADER_PATH := "res://shaders/water.gdshader"
 
 ## Base Y offset above terrain. Each priority tier adds an extra 0.05 m on top.
 const Y_OFFSET_BASE: float = 0.04
@@ -66,6 +67,7 @@ const _TYPE_PRIORITY: Dictionary = {
 }
 
 var _material_cache: Dictionary = {}
+var _water_shader: Shader = null
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -198,15 +200,25 @@ func _build_flat_mesh(ring_local: PackedVector2Array, centroid: Vector2, y_offse
 # Material cache
 # ---------------------------------------------------------------------------
 
-func _get_material(landuse_type: String) -> StandardMaterial3D:
+func _get_material(landuse_type: String) -> Material:
 	if _material_cache.has(landuse_type):
 		return _material_cache[landuse_type]
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color  = _TYPE_COLOURS[landuse_type]
-	mat.roughness     = _TYPE_ROUGHNESS.get(landuse_type, 0.90)
-	mat.cull_mode     = BaseMaterial3D.CULL_DISABLED
-	mat.render_priority = _TYPE_PRIORITY.get(landuse_type, 0)
+	var mat: Material
+	if landuse_type == "water":
+		if _water_shader == null:
+			_water_shader = load(WATER_SHADER_PATH)
+		var smat := ShaderMaterial.new()
+		smat.shader = _water_shader
+		mat = smat
+	else:
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color   = _TYPE_COLOURS[landuse_type]
+		smat.roughness      = _TYPE_ROUGHNESS.get(landuse_type, 0.90)
+		smat.cull_mode      = BaseMaterial3D.CULL_DISABLED
+		smat.render_priority = _TYPE_PRIORITY.get(landuse_type, 0)
+		mat = smat
+
 	_material_cache[landuse_type] = mat
 	return mat
 

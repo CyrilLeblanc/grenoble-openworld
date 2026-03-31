@@ -6,11 +6,11 @@ Les phases sont ordonnées par priorité visuelle — ce qui a le plus d'impact 
 
 | Phase | Contenu | Statut |
 |---|---|---|
-| 1 | LOD — infrastructure commune | À faire |
-| 2 | Terrain IGN + Façades atlas | À faire |
-| 3 | Routes, trottoirs & marquages | À faire |
-| 4 | Ponts & Eau | À faire |
-| 5 | Végétation enrichie & Mobilier urbain | À faire |
+| 1 | LOD — infrastructure commune | Fait |
+| 2 | Terrain IGN + Façades atlas | Fait |
+| 3 | Routes, trottoirs & marquages | Fait |
+| 4 | Ponts & Eau | Fait |
+| 5 | Végétation enrichie & Mobilier urbain | Fait |
 | 6 | Ciel & Atmosphère | À faire |
 | 7 | Cycle jour/nuit | Plus tard |
 

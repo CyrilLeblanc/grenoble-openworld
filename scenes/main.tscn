@@ -6,6 +6,8 @@
 [ext_resource type="Script" uid="uid://c7qnydbvwlxpn" path="res://scripts/NoclipPlayer.gd" id="4"]
 [ext_resource type="Script" uid="uid://roadmeshspawner" path="res://scripts/RoadMeshSpawner.gd" id="6"]
 [ext_resource type="Script" uid="uid://forestspawner" path="res://scripts/ForestSpawner.gd" id="7"]
+[ext_resource type="Script" uid="uid://sidewalkspawner" path="res://scripts/SidewalkSpawner.gd" id="8"]
+[ext_resource type="Script" uid="uid://furniturespawner" path="res://scripts/FurnitureSpawner.gd" id="9"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -42,8 +44,14 @@ script = ExtResource("3")
 [node name="RoadMeshSpawner" type="Node3D" parent="." unique_id=4023958762]
 script = ExtResource("6")
 
+[node name="SidewalkSpawner" type="Node3D" parent="." unique_id=6047382910]
+script = ExtResource("8")
+
 [node name="ForestSpawner" type="Node3D" parent="." unique_id=5034069873]
 script = ExtResource("7")
+
+[node name="FurnitureSpawner" type="Node3D" parent="." unique_id=7158290641]
+script = ExtResource("9")
 
 [node name="Player" type="Camera3D" parent="." unique_id=939262276]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 800, 0)
