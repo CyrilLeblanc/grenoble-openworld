@@ -40,6 +40,19 @@ var elevation_range_m: float:
 const CHUNK_SIZE_M: float = 500.0
 
 # ---------------------------------------------------------------------------
+# LOD distances
+# ---------------------------------------------------------------------------
+
+## Buildings: detailed extruded mesh hidden beyond this distance.
+const LOD_BUILDING_DETAIL_M: float = 400.0
+## Buildings: cheap LOD box hidden beyond this distance.
+const LOD_BUILDING_BOX_M: float    = 2400.0
+## Trees: full 3D mesh hidden beyond this distance from the chunk centre.
+const LOD_TREE_3D_M: float         = 600.0
+## Trees: billboard hidden beyond this distance from the chunk centre.
+const LOD_TREE_BILLBOARD_M: float  = 1400.0
+
+# ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 

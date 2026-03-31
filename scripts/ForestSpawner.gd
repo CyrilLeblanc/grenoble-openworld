@@ -96,7 +96,7 @@ func _load_and_spawn() -> void:
 		return
 
 	print("ForestSpawner: placing %d trees ..." % transforms.size())
-	_build_multimesh(transforms)
+	_build_lod_multimeshes(transforms)
 	print("ForestSpawner: done.")
 
 
@@ -189,27 +189,122 @@ func _scatter_in_polygon(
 
 
 # ---------------------------------------------------------------------------
-# MultiMesh construction
+# LOD MultiMesh construction — per-chunk near (3D) + far (billboard)
 # ---------------------------------------------------------------------------
 
-func _build_multimesh(transforms: Array[Transform3D]) -> void:
+func _build_lod_multimeshes(all_transforms: Array[Transform3D]) -> void:
+	# Group transforms into 500 m spatial chunks.
+	var by_chunk: Dictionary = {}
+	for xform in all_transforms:
+		var key := Vector2i(
+			int(floor(xform.origin.x / WorldConfig.CHUNK_SIZE_M)),
+			int(floor(xform.origin.z / WorldConfig.CHUNK_SIZE_M)),
+		)
+		if not by_chunk.has(key):
+			by_chunk[key] = []
+		by_chunk[key].append(xform)
+
+	var near_mesh := _build_tree_mesh()
+	var far_mesh  := _build_billboard_mesh()
+	var rng       := RandomNumberGenerator.new()
+
+	for chunk_key in by_chunk:
+		var chunk_xforms: Array = by_chunk[chunk_key]
+		# Position node at chunk centre so visibility_range distance is
+		# measured from the chunk, not from world origin.
+		var chunk_origin := Vector3(
+			(chunk_key.x + 0.5) * WorldConfig.CHUNK_SIZE_M,
+			0.0,
+			(chunk_key.y + 0.5) * WorldConfig.CHUNK_SIZE_M,
+		)
+
+		# Build relative transforms (chunk-local).
+		var local_xforms: Array[Transform3D] = []
+		for xform in chunk_xforms:
+			local_xforms.append(Transform3D(
+				xform.basis,
+				xform.origin - chunk_origin,
+			))
+
+		# Near: full 3D tree mesh, hidden beyond LOD_TREE_3D_M.
+		rng.seed = hash(chunk_key) ^ 0xF00DCAFE
+		var mm_near := _make_multimesh(local_xforms, near_mesh, rng)
+		var mmi_near := MultiMeshInstance3D.new()
+		mmi_near.multimesh                  = mm_near
+		mmi_near.position                   = chunk_origin
+		mmi_near.visibility_range_end       = WorldConfig.LOD_TREE_3D_M
+		mmi_near.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+		add_child(mmi_near)
+
+		# Far: billboard quad, visible from LOD_TREE_3D_M to LOD_TREE_BILLBOARD_M.
+		rng.seed = hash(chunk_key) ^ 0xF00DCAFE  # same seed → same colours per tree
+		var mm_far := _make_multimesh(local_xforms, far_mesh, rng)
+		var mmi_far := MultiMeshInstance3D.new()
+		mmi_far.multimesh                   = mm_far
+		mmi_far.position                    = chunk_origin
+		mmi_far.visibility_range_begin      = WorldConfig.LOD_TREE_3D_M
+		mmi_far.visibility_range_end        = WorldConfig.LOD_TREE_BILLBOARD_M
+		mmi_far.visibility_range_fade_mode  = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+		add_child(mmi_far)
+
+
+func _make_multimesh(
+	xforms: Array[Transform3D],
+	mesh:   Mesh,
+	rng:    RandomNumberGenerator,
+) -> MultiMesh:
 	var mm := MultiMesh.new()
-	mm.transform_format    = MultiMesh.TRANSFORM_3D
-	mm.use_custom_data     = false
-	mm.use_colors          = true   # per-instance canopy colour variation
-	mm.instance_count      = transforms.size()
-	mm.mesh                = _build_tree_mesh()
-
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 1337
-
-	for i in transforms.size():
-		mm.set_instance_transform(i, transforms[i])
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors       = true
+	mm.use_custom_data  = false
+	mm.instance_count   = xforms.size()
+	mm.mesh             = mesh
+	for i in xforms.size():
+		mm.set_instance_transform(i, xforms[i])
 		mm.set_instance_color(i, CANOPY_COLOURS[rng.randi() % CANOPY_COLOURS.size()])
+	return mm
 
-	var mmi := MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	add_child(mmi)
+
+## Flat vertical quad (XY plane). BILLBOARD_FIXED_Y rotates it to face the camera.
+## Per-instance colour (canopy variation) is applied via use_colors on the MultiMesh.
+func _build_billboard_mesh() -> ArrayMesh:
+	var hw := 2.8   # half-width = canopy radius
+	var h  := 7.0   # typical tree height
+
+	var verts   := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colours := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	verts.append_array([
+		Vector3(-hw, 0.0, 0.0),
+		Vector3( hw, 0.0, 0.0),
+		Vector3( hw,   h, 0.0),
+		Vector3(-hw,   h, 0.0),
+	])
+	for _i in 4:
+		normals.append(Vector3.BACK)
+		colours.append(Color.WHITE)
+	indices.append_array([0, 1, 2, 0, 2, 3])
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR]  = colours
+	arrays[Mesh.ARRAY_INDEX]  = indices
+
+	var arr_mesh := ArrayMesh.new()
+	arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness                  = 0.9
+	mat.billboard_mode             = BaseMaterial3D.BILLBOARD_FIXED_Y
+	mat.cull_mode                  = BaseMaterial3D.CULL_DISABLED
+	arr_mesh.surface_set_material(0, mat)
+
+	return arr_mesh
 
 
 # ---------------------------------------------------------------------------
