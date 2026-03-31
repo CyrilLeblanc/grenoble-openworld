@@ -26,7 +26,7 @@ from rasterio.merge import merge
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.crs import CRS
 
-from config import WORLD, DEM_RAW_DIR, HEIGHTMAP_PNG, OUTPUT_DIR
+from config import WORLD, DEM_RAW_DIR, IGN_DEM_TIFF, HEIGHTMAP_PNG, OUTPUT_DIR, LANDUSE_GEOJSON
 
 
 _TARGET_CRS = CRS.from_epsg(32631)  # UTM zone 31N — metres
@@ -47,6 +47,15 @@ def _load_and_merge_tiles() -> tuple:
         ds.close()
 
     return mosaic, transform, crs
+
+
+def _load_ign_tile() -> tuple:
+    """Open the IGN RGE ALTI GeoTIFF, return (data, transform, crs)."""
+    with rasterio.open(IGN_DEM_TIFF) as ds:
+        data      = ds.read()
+        transform = ds.transform
+        crs       = ds.crs
+    return data, transform, crs
 
 
 def _reproject_to_utm(mosaic, src_transform, src_crs):
@@ -75,8 +84,13 @@ def _reproject_to_utm(mosaic, src_transform, src_crs):
 
 
 def _crop_to_world(data, transform):
-    """Crop the UTM raster to the world bounding box (in metres from centre)."""
+    """Crop the UTM raster to the world bounding box.
+
+    Returns (cropped, world_width_m, world_height_m, cropped_transform)
+    where cropped_transform maps pixel coords → absolute UTM 31N metres.
+    """
     from pyproj import Transformer
+    from rasterio.transform import from_bounds
 
     to_utm = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
     min_lon, min_lat, max_lon, max_lat = WORLD.bbox()
@@ -95,13 +109,15 @@ def _crop_to_world(data, transform):
     col_start = min(col_off_left, col_off_right)
     col_end   = max(col_off_left, col_off_right)
 
+    nrows = row_end - row_start
+    ncols = col_end - col_start
     cropped = data[0, row_start:row_end, col_start:col_end]
 
-    # Real-world extents in metres (width × height of the crop)
-    world_width_m  = abs((col_end - col_start) * transform.a)
-    world_height_m = abs((row_end - row_start) * transform.e)
+    world_width_m  = abs(ncols * transform.a)
+    world_height_m = abs(nrows * transform.e)
+    cropped_transform = from_bounds(west, south, east, north, ncols, nrows)
 
-    return cropped, world_width_m, world_height_m
+    return cropped, world_width_m, world_height_m, cropped_transform
 
 
 def _smooth_elevation(elevation: np.ndarray, sigma: float = 2.0) -> np.ndarray:
@@ -118,6 +134,59 @@ def _smooth_elevation(elevation: np.ndarray, sigma: float = 2.0) -> np.ndarray:
     result = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=elevation.astype(np.float64))
     result = np.apply_along_axis(lambda r: np.convolve(r, kernel, mode="same"), axis=0, arr=result)
     return result.astype(np.float32)
+
+
+def _depress_water(elevation: np.ndarray, transform, depression_m: float = 2.5) -> np.ndarray:
+    """Lower pixels that fall inside OSM water polygons by depression_m metres.
+
+    Water polygons in landuse.geojson use local UTM 31N coords (metres from
+    world centre).  This function offsets them to absolute UTM 31N so they
+    align with the elevation array's transform.
+    """
+    import json
+    from pyproj import Transformer
+    from rasterio.features import rasterize as rio_rasterize
+    from shapely.geometry import shape, mapping
+    from shapely.affinity import translate
+
+    if not LANDUSE_GEOJSON.exists():
+        print("  landuse.geojson not found — skipping water depression.")
+        return elevation
+
+    with open(LANDUSE_GEOJSON) as f:
+        geojson = json.load(f)
+
+    # World centre in absolute UTM 31N.
+    to_utm = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
+    cx, cy = to_utm.transform(WORLD.center_lon, WORLD.center_lat)
+
+    water_shapes = []
+    for feat in geojson.get("features", []):
+        if feat["properties"].get("type") != "water":
+            continue
+        geom = shape(feat["geometry"])
+        # local UTM (origin = world centre) → absolute UTM 31N
+        geom = translate(geom, xoff=cx, yoff=cy)
+        water_shapes.append(mapping(geom))
+
+    if not water_shapes:
+        print("  No water polygons found in landuse.geojson — skipping.")
+        return elevation
+
+    h, w = elevation.shape
+    mask = rio_rasterize(
+        [(g, 1) for g in water_shapes],
+        out_shape=(h, w),
+        transform=transform,
+        fill=0,
+        dtype=np.uint8,
+    )
+
+    n_pixels = int(mask.sum())
+    print(f"  Depressing {n_pixels} water pixels by {depression_m} m.")
+    result = elevation.copy()
+    result[mask == 1] -= depression_m
+    return result
 
 
 def _normalise_to_16bit(elevation: np.ndarray) -> tuple[np.ndarray, float, float]:
@@ -166,19 +235,32 @@ def _resize(data: np.ndarray, size: int) -> np.ndarray:
 
 
 def main() -> None:
-    mosaic, src_transform, src_crs = _load_and_merge_tiles()
+    if IGN_DEM_TIFF.exists():
+        print(f"Source: IGN RGE ALTI (DTM)  ← {IGN_DEM_TIFF.name}")
+        mosaic, src_transform, src_crs = _load_ign_tile()
+        is_dsm = False
+    else:
+        print("IGN DEM not found — falling back to Copernicus GLO-30 (DSM).")
+        print("Run download_dem_ign.py for a cleaner terrain.")
+        mosaic, src_transform, src_crs = _load_and_merge_tiles()
+        is_dsm = True
+
     utm_data, utm_transform = _reproject_to_utm(mosaic, src_transform, src_crs)
 
     print("Cropping to world bbox ...")
-    elevation, world_w, world_h = _crop_to_world(utm_data, utm_transform)
+    elevation, world_w, world_h, crop_transform = _crop_to_world(utm_data, utm_transform)
 
     print(
         f"Crop size: {elevation.shape[1]}×{elevation.shape[0]} px  "
         f"({world_w:.0f}×{world_h:.0f} m)"
     )
 
-    print("Smoothing elevation (Gaussian blur sigma=6 to remove DSM noise) ...")
-    elevation = _smooth_elevation(elevation, sigma=6.0)
+    if is_dsm:
+        print("Smoothing elevation (Gaussian blur sigma=6 to suppress DSM noise) ...")
+        elevation = _smooth_elevation(elevation, sigma=6.0)
+
+    print("Depressing water bodies ...")
+    elevation = _depress_water(elevation, crop_transform)
 
     uint16, elev_min, elev_max = _normalise_to_16bit(elevation)
 
