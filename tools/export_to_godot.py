@@ -14,7 +14,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from config import HEIGHTMAP_PNG, BUILDINGS_GEOJSON, LANDUSE_GEOJSON, LANDUSE_TEXTURE_PNG, ROADS_GEOJSON, TREES_GEOJSON, GODOT_DATA_DIR
+from config import HEIGHTMAP_PNG, BUILDINGS_GEOJSON, LANDUSE_GEOJSON, LANDUSE_TEXTURE_PNG, ROADS_GEOJSON, TREES_GEOJSON, FACADE_ATLAS_PNG, GODOT_DATA_DIR
 
 
 _EXPORTS = [
@@ -25,6 +25,7 @@ _EXPORTS = [
     (LANDUSE_TEXTURE_PNG,               GODOT_DATA_DIR / "landuse_texture.png"),
     (ROADS_GEOJSON,                     GODOT_DATA_DIR / "roads.geojson"),
     (TREES_GEOJSON,                     GODOT_DATA_DIR / "trees.geojson"),
+    (FACADE_ATLAS_PNG,                  GODOT_DATA_DIR / "facade_atlas.png"),
 ]
 
 

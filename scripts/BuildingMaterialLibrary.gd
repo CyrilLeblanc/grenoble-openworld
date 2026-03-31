@@ -4,14 +4,16 @@
 ## Roof materials stay as StandardMaterial3D (flat colour).
 ##
 ## Priority:
-##   1. Explicit OSM colour tag (wall_colour / roof_colour) → plain colour material
-##   2. building= type → shader profile with windows
-##   3. Default profile
+##   1. building=  type → select visual profile (window proportions, colours)
+##   2. building:material → select surface pattern (brick/stone/concrete/glass/metal)
+##   3. building:colour → colour tint applied on top of the facade shader
+##   4. Default profile if nothing matches
 ##
 ## Materials are cached to avoid duplicates across thousands of buildings.
 class_name BuildingMaterialLibrary
 
 const _FACADE_SHADER_PATH := "res://shaders/facade.gdshader"
+const _FACADE_ATLAS_PATH  := "res://data/facade_atlas.png"
 
 # ---------------------------------------------------------------------------
 # Visual profiles — wall shader params + roof colour
@@ -112,29 +114,50 @@ const _TYPE_TO_PROFILE: Dictionary = {
 # Cache + shader
 # ---------------------------------------------------------------------------
 
-var _cache: Dictionary  = {}
-var _shader: Shader     = null
+var _cache: Dictionary   = {}
+var _shader: Shader      = null
+var _atlas: Texture2D    = null
 
 func _get_shader() -> Shader:
 	if _shader == null:
 		_shader = load(_FACADE_SHADER_PATH) as Shader
 	return _shader
 
+func _get_atlas() -> Texture2D:
+	if _atlas == null:
+		_atlas = load(_FACADE_ATLAS_PATH) as Texture2D
+	return _atlas
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 func get_wall_material(properties: Dictionary) -> Material:
-	# Explicit OSM colour → plain material, no shader windows.
-	var raw_colour = properties.get("wall_colour")
-	if raw_colour != null and typeof(raw_colour) == TYPE_STRING:
-		return _plain_wall_material(raw_colour)
+	var profile  := _resolve_profile(properties)
+	var mat_type := _resolve_material_type(properties)
 
-	var profile := _resolve_profile(properties)
-	var key := profile + "_wall"
-	if not _cache.has(key):
-		_cache[key] = _facade_material(profile)
-	return _cache[key]
+	# Base material cached by (profile, material_type).
+	var base_key := "%s_%d" % [profile, mat_type]
+	if not _cache.has(base_key):
+		_cache[base_key] = _facade_material(profile, mat_type)
+
+	# building:colour → tint applied on top of the facade shader.
+	var raw_colour = properties.get("wall_colour")
+	if raw_colour == null or typeof(raw_colour) != TYPE_STRING or (raw_colour as String).is_empty():
+		return _cache[base_key]
+
+	var tint_key := base_key + "_" + str(raw_colour)
+	if not _cache.has(tint_key):
+		var base_mat: Material = _cache[base_key]
+		if base_mat is ShaderMaterial:
+			var tinted := (base_mat as ShaderMaterial).duplicate() as ShaderMaterial
+			tinted.set_shader_parameter("colour_tint",
+				_parse_osm_colour(raw_colour, Color.WHITE))
+			_cache[tint_key] = tinted
+		else:
+			# Shader unavailable — fall back to a plain coloured material.
+			_cache[tint_key] = _plain_wall_material(raw_colour)
+	return _cache[tint_key]
 
 
 func get_roof_material(properties: Dictionary) -> StandardMaterial3D:
@@ -159,24 +182,32 @@ func cache_size() -> int:
 # Material builders
 # ---------------------------------------------------------------------------
 
-func _facade_material(profile: String) -> Material:
+func _facade_material(profile: String, mat_type: int = 0) -> Material:
 	var shader := _get_shader()
 	if shader == null:
-		# Fallback if shader file is missing.
 		var p: Dictionary = _PROFILES[profile]
 		return _plain_colour_material(p["wall_colour"], p["wall_rough"], p["wall_metal"])
 
 	var p: Dictionary = _PROFILES[profile]
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
+	var atlas := _get_atlas()
+	if atlas != null:
+		mat.set_shader_parameter("facade_atlas", atlas)
 	mat.set_shader_parameter("wall_albedo",    p["wall_colour"])
 	mat.set_shader_parameter("roughness_wall", p["wall_rough"])
 	mat.set_shader_parameter("metallic_wall",  p["wall_metal"])
 	mat.set_shader_parameter("window_width",   p["win_width"])
 	mat.set_shader_parameter("window_height",  p["win_height"])
 	mat.set_shader_parameter("door_width",     p["door_width"])
-	# Window glass colour: slightly tinted per profile.
 	mat.set_shader_parameter("window_albedo",  _window_colour(p["wall_colour"]))
+	mat.set_shader_parameter("colour_tint",    Color.WHITE)
+	mat.set_shader_parameter("material_type",  mat_type)
+
+	var slot: int = _MATTYPE_SLOT[mat_type] if mat_type < _MATTYPE_SLOT.size() and _MATTYPE_SLOT[mat_type] >= 0 \
+		else _PROFILE_SLOT.get(profile, 0)
+	mat.set_shader_parameter("atlas_slot",   slot)
+	mat.set_shader_parameter("tile_repeat",  _SLOT_TILE_REPEAT[slot] if slot < _SLOT_TILE_REPEAT.size() else 1.5)
 	return mat
 
 
@@ -213,6 +244,59 @@ static func _window_colour(wall: Color) -> Color:
 func _resolve_profile(properties: Dictionary) -> String:
 	var building_type: String = str(properties.get("building", ""))
 	return _TYPE_TO_PROFILE.get(building_type, "default")
+
+
+## Atlas slot for each profile (when no explicit material overrides it).
+const _PROFILE_SLOT: Dictionary = {
+	"residential": 0,  # plaster
+	"commercial":  3,  # concrete_smooth
+	"industrial":  4,  # concrete_rough
+	"civic":       5,  # limestone
+	"garage":      4,  # concrete_rough
+	"default":     0,  # plaster
+}
+
+## Atlas slot forced by building:material (overrides profile default).
+## -1 means "use profile slot".
+const _MATTYPE_SLOT: Array = [
+	-1,  # 0 default → profile
+	 1,  # 1 brick   → brick_red
+	 3,  # 2 concrete → concrete_smooth
+	-1,  # 3 glass   → skips atlas entirely
+	 5,  # 4 stone   → limestone
+	 7,  # 5 metal   → metal
+]
+
+## How many texture tiles per UV unit (= per 3 m of wall), per slot.
+const _SLOT_TILE_REPEAT: Array = [
+	1.5,  # 0 plaster
+	3.0,  # 1 brick_red
+	3.0,  # 2 brick_beige
+	1.0,  # 3 concrete_smooth
+	1.2,  # 4 concrete_rough
+	1.5,  # 5 limestone
+	2.0,  # 6 stone
+	1.0,  # 7 metal
+]
+
+
+## Map building:material OSM tag → shader material_type int.
+## 0=default  1=brick  2=concrete  3=glass  4=stone  5=metal
+func _resolve_material_type(properties: Dictionary) -> int:
+	var mat: String = str(properties.get("material", ""))
+	match mat:
+		"brick", "brick_block":
+			return 1
+		"concrete", "cement", "reinforced_concrete", "prefabricated_concrete":
+			return 2
+		"glass":
+			return 3
+		"stone", "limestone", "sandstone", "granite", "flint", "cobblestone":
+			return 4
+		"metal", "steel", "aluminium", "aluminum", "copper", "zinc":
+			return 5
+		_:
+			return 0
 
 
 static func _parse_osm_colour(raw: String, fallback: Color) -> Color:
